@@ -8,30 +8,89 @@
 
 import UIKit
 import RealmSwift
+import ChameleonFramework
 
-class ToDoListViewController: UITableViewController {
+class ToDoListViewController: SwipeTableViewController {
 
-    let realm = try! Realm()
+    var notificationToken: NotificationToken?
     var todoItems: Results<Item>?
+    
     var selectedCategory : Category? {
         didSet{
             loadItems()
         }
+  
     }
     
+    @IBOutlet weak var searchBar: UISearchBar!
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+//        let realm = RealmServices.shared.realm
+
+        // Can't use this untill we can isolate delete notification due to Swipe also deleting the item in the todoItems list - which causes a Fatel error!
+//        notificationToken = realm.observe { (notification, realm) in
+//            self.tableView.reloadData()
+//        }
+        
+        RealmService.shared.ObserveRealmErrors(in: self) { (error) in
+            // Handle errors here.
+            print(error ?? "No error detected")
+        }
 
     }
     
-    // MARK: - Tableview Datasource Methods
+    override func viewWillAppear(_ animated: Bool) {
+        
+        title = selectedCategory?.name
+        guard let colourHex = selectedCategory?.backgroundColor else { fatalError() }
+        updateNavBar(withhexCode: colourHex)
+        
+    }
     
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        
+        notificationToken?.invalidate()
+        RealmService.shared.stopObservingErrors(in: self)
+        
+    }
+    
+    override func willMove(toParentViewController parent: UIViewController?) {
+        
+        updateNavBar(withhexCode: "1D98F6")
    
+    }
+    
+    
+    //MARK: - Load items into the tableview datasource
+    func loadItems() {
+        todoItems = selectedCategory?.items.sorted(byKeyPath: "title", ascending: true)
+        
+        tableView.reloadData()
+    }
+    
+    //MARK: - Nav bar setup methods
+    
+    func updateNavBar(withhexCode colourHexCode: String ) {
+        
+        guard let navBar = navigationController?.navigationBar else { fatalError("Navigation controller does not exist")}
+
+        guard let navBarColour = UIColor(hexString: colourHexCode) else { fatalError() }
+        navBar.barTintColor = navBarColour
+        navBar.tintColor = ContrastColorOf(navBarColour, returnFlat: true)
+        navBar.largeTitleTextAttributes = [NSAttributedStringKey.foregroundColor: ContrastColorOf(navBarColour, returnFlat: true)]
+        searchBar.barTintColor = navBarColour
+    
+    }
+    
+    //MARK: - Tableview Datasource Methods
+    
     //TODO Declare numberOfRowsInSection here:
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        
-        return todoItems?.count ?? 1
+        print("todoItems count: \(String(describing: todoItems?.count))")
+        return todoItems!.count
     
     }
     
@@ -39,42 +98,39 @@ class ToDoListViewController: UITableViewController {
     //TODO: Declare cellForRowAtIndexPath here:
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         
-        let cell = tableView.dequeueReusableCell(withIdentifier: "ToDoItemCell", for: indexPath)
+        let cell = super.tableView(tableView, cellForRowAt: indexPath)
         
         // populate the cell with item data
+        
+        print(CGFloat(indexPath.row) / CGFloat(todoItems!.count))
         
         if let item = todoItems?[indexPath.row] {
             cell.textLabel?.text = item.title
             cell.accessoryType = item.done ? .checkmark : .none
+            
+            if let color = UIColor(hexString: selectedCategory!.backgroundColor)?.darken(byPercentage: CGFloat(indexPath.row) / CGFloat(todoItems!.count)) {
+                cell.backgroundColor = color
+                cell.textLabel?.textColor = ContrastColorOf(color, returnFlat: true)
+                cell.tintColor = ContrastColorOf(color, returnFlat: true)
+            }
         
         } else {
             cell.textLabel?.text = "no Items Added"
-            
         }
         
         return cell
+    
     }
     
     
     //MARK - TableView Delegate Methods
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         
-        if let item = todoItems?[indexPath.row] {
-            
-            do {
-                try realm.write {
-                    item.done = !item.done
-                    
-                }
-                
-            } catch {
-                print("Error saving done status, \(error)")
-                
-            }
-        }
+        guard let item = todoItems?[indexPath.row] else { fatalError() }
+        let done = !item.done
+        RealmService.shared.update(item, with: ["done": done])
+        self.tableView.reloadData()
 
-        tableView.reloadData()
-        
     }
     
     
@@ -86,30 +142,16 @@ class ToDoListViewController: UITableViewController {
 
         let action = UIAlertAction(title: "Add Item", style: .default) { (action) in
 
-            if let currentCategory = self.selectedCategory {
-                
-                do {
-                    try self.realm.write {
-                        let newItem = Item()
-                        newItem.title = alert.textFields![0].text!
-                        currentCategory.items.append(newItem)
-                        
-                    }
-                    
-                } catch {
-                    print("Error saving item, \(error)")
-                    
-                }
-
-                self.tableView.reloadData()
-            
-            }
+            guard let currentCategory = self.selectedCategory else { fatalError() }
+            let newItem = Item()
+            newItem.title = alert.textFields![0].text!
+            RealmService.shared.appendToList(currentCategory.items, newItem)
+            self.tableView.reloadData()
 
         }
 
         alert.addTextField { (alertTextField) in
             alertTextField.placeholder = "Create new item"
-
         }
 
         alert.addAction(action)
@@ -117,11 +159,12 @@ class ToDoListViewController: UITableViewController {
 
     }
     
-   
-    func loadItems() {
-        todoItems = selectedCategory?.items.sorted(byKeyPath: "title", ascending: true)
+    //MARK: - Delete Data From Swipe
+    override func updateModel(at indexPath: IndexPath) {
+        guard let itemForDeletion = self.todoItems?[indexPath.row] else { fatalError() }
+        RealmService.shared.delete(itemForDeletion)
+//        tableView.reloadData() // Don't do this as Swipe is also doing this
 
-        tableView.reloadData()
     }
 
 }

@@ -8,19 +8,30 @@
 
 import UIKit
 import RealmSwift
+import ChameleonFramework
 
-class CategoryViewController: UITableViewController {
-    
-    
-    
+class CategoryViewController: SwipeTableViewController {
+
+    var notificationToken: NotificationToken?
     var categoryArray: Results<Category>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        // See https://www.youtube.com/watch?v=hC6dLLbfUXc#t=25m50s for creating RealmService
+        let realm = RealmService.shared.realm
+        categoryArray = realm.objects(Category.self)
+        
+        notificationToken = realm.observe { (notification, realm) in
+            self.tableView.reloadData()
+        }
 
-        loadCategories()
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
         
-        
+        notificationToken?.invalidate()
     }
 
     //MARK: - TableView Datasource Methods
@@ -29,18 +40,25 @@ class CategoryViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         
         return categoryArray?.count ?? 1
-    
+
     }
+    
     
     //TODO: Declare cellForRowAtIndexPath here:
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
     
-        let cell = tableView.dequeueReusableCell(withIdentifier: "CategoryCell", for: indexPath)
+        let cell = super.tableView(tableView, cellForRowAt: indexPath)
         
         // populate the cell with category data
+        if let category = categoryArray?[indexPath.row] {
         
-        cell.textLabel?.text = categoryArray?[indexPath.row].name ?? "No categories added yet"
-        
+            cell.textLabel?.text = category.name
+            
+            guard let categoryColor = UIColor(hexString: category.backgroundColor) else { fatalError() }
+            cell.textLabel?.textColor = ContrastColorOf(categoryColor, returnFlat: true)
+            cell.backgroundColor =  categoryColor
+        }
+       
         return cell
     
     }
@@ -65,33 +83,19 @@ class CategoryViewController: UITableViewController {
     }
     
     //MARK: - Data Manipulation Methods
-    
+    //MARK: - Save Data
     func save(category: Category) {
-        let realm = try! Realm()
-        do {
-            
-            try realm.write {
-                realm.add(category)
-            
-            }
-        
-        } catch {
-           
-            print("Error saving category, \(error)")
-        
-        }
+        RealmService.shared.create(category)
         
     }
     
-    func loadCategories() {
-        let realm = try! Realm()
-        categoryArray = realm.objects(Category.self)
-        
-        tableView.reloadData()
+    override func updateModel(at indexPath: IndexPath) {
+
+        if let categoryForDeletion = self.categoryArray?[indexPath.row] {
+            RealmService.shared.delete(categoryForDeletion)
+        }
 
     }
-    
-    //MARK: - Add New Categories
     
     @IBAction func addButtonPressed(_ sender: UIBarButtonItem) {
         
@@ -101,6 +105,7 @@ class CategoryViewController: UITableViewController {
             
             let newCategory = Category()
             newCategory.name = alert.textFields![0].text!
+            newCategory.backgroundColor = UIColor.randomFlat.hexValue()
             
             self.save(category: newCategory)
             
@@ -118,7 +123,5 @@ class CategoryViewController: UITableViewController {
         present(alert, animated: true, completion: nil)
         
     }
-    
-    
     
 }
